@@ -2,8 +2,12 @@ import 'dart:io';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:band_names/providers/socket_service.dart';
+
+import 'package:pie_chart/pie_chart.dart';
 
 import 'package:band_names/models/band.dart';
+import 'package:provider/provider.dart';
 
 class HomePage extends StatefulWidget {
   @override
@@ -12,15 +16,41 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   List<Band> bands = [
-    Band(id: '1', name: 'Imagine Dragons', votes: 10),
-    Band(id: '2', name: 'Switchfoot', votes: 3),
-    Band(id: '3', name: 'For Today', votes: 9),
-    Band(id: '4', name: 'Coldplay', votes: 4),
-    Band(id: '5', name: 'The Devil Wears Prada', votes: 5),
+    // Band(id: '1', name: 'Imagine Dragons', votes: 10),
+    // Band(id: '2', name: 'Switchfoot', votes: 3),
+    // Band(id: '3', name: 'For Today', votes: 9),
+    // Band(id: '4', name: 'Coldplay', votes: 4),
+    // Band(id: '5', name: 'The Devil Wears Prada', votes: 5),
   ];
 
   @override
+  void initState() {
+    final socketService = Provider.of<SocketService>(context, listen: false);
+
+    socketService.socket.on('active-bands', _handleActiveBands);
+
+    super.initState();
+  }
+
+  _handleActiveBands(dynamic payload) {
+    this.bands = (payload as List).map((band) => Band.fromMap(band)).toList();
+
+    setState(() {});
+  }
+
+  // Cuando se destruya el home (Que no se hará en este ejercicio), se hará
+  // uso del dispose
+  @override
+  void dispose() {
+    final socketService = Provider.of<SocketService>(context, listen: false);
+    socketService.socket.off('active-bands');
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final socketService = Provider.of<SocketService>(context);
+
     return Scaffold(
       appBar: AppBar(
         elevation: 1,
@@ -28,11 +58,33 @@ class _HomePageState extends State<HomePage> {
           'Band names',
           style: TextStyle(color: Colors.black87),
         ),
+        actions: <Widget>[
+          Container(
+            margin: EdgeInsets.only(right: 10.0),
+            child: socketService.serverStatus == ServerStatus.Online
+                ? Icon(
+                    Icons.check_circle,
+                    color: Colors.blue[300],
+                  )
+                : Icon(
+                    Icons.signal_cellular_connected_no_internet_4_bar_rounded,
+                    color: Colors.red,
+                  ),
+          ),
+        ],
         backgroundColor: Colors.white,
       ),
-      body: ListView.builder(
-        itemCount: bands.length,
-        itemBuilder: (context, index) => _bandTile(bands[index]),
+      body: Column(
+        children: <Widget>[
+          _showGraph(),
+          // Expanded toma todo el espacio libre disponible en base a la columna
+          Expanded(
+            child: ListView.builder(
+              itemCount: bands.length,
+              itemBuilder: (context, index) => _bandTile(bands[index]),
+            ),
+          ),
+        ],
       ),
       floatingActionButton: FloatingActionButton(
         child: Icon(Icons.add),
@@ -43,14 +95,13 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _bandTile(Band band) {
+    final socketService = Provider.of<SocketService>(context, listen: false);
+
     return Dismissible(
       key: Key(band.id),
       direction: DismissDirection.startToEnd,
-      onDismissed: (direction) {
-        print('$direction');
-        print('$band.id');
-        // TODO: LLamar el borrado en el server
-      },
+      onDismissed: (direction) =>
+          socketService.emit('delete-band', {'id': band.id}),
       background: Container(
         padding: EdgeInsets.only(left: 10.0),
         color: Colors.redAccent,
@@ -72,9 +123,7 @@ class _HomePageState extends State<HomePage> {
           '${band.votes}',
           style: TextStyle(fontSize: 20),
         ),
-        onTap: () {
-          print(band.name);
-        },
+        onTap: () => socketService.socket.emit('vote-band', {'id': band.id}),
       ),
     );
   }
@@ -86,7 +135,7 @@ class _HomePageState extends State<HomePage> {
       // Android
       showDialog(
         context: context,
-        builder: (context) => AlertDialog(
+        builder: (_) => AlertDialog(
           title: Text('New band name'),
           content: TextField(
             controller: textController,
@@ -127,13 +176,62 @@ class _HomePageState extends State<HomePage> {
   }
 
   void addBandToList(String name) {
+    final socketService = Provider.of<SocketService>(context, listen: false);
+
     if (name.length > 1) {
-      this
-          .bands
-          .add(new Band(id: DateTime.now().toString(), name: name, votes: 0));
-      setState(() {});
+      socketService.emit('add-band', {
+        'name': name,
+      });
     }
 
     Navigator.pop(context);
+  }
+
+  Widget _showGraph() {
+    Map<String, double> dataMap = new Map();
+    bands.forEach((band) {
+      dataMap.putIfAbsent(band.name, () => band.votes.toDouble());
+    });
+
+    final List<Color> colorList = [
+      Colors.blue[50],
+      Colors.blue[200],
+      Colors.pink[50],
+      Colors.pink[200],
+      Colors.yellow[50],
+      Colors.yellow[200],
+    ];
+
+    return Container(
+      width: double.infinity,
+      height: 200.0,
+      child: PieChart(
+        dataMap: dataMap,
+        animationDuration: Duration(milliseconds: 800),
+        chartLegendSpacing: 32,
+        chartRadius: MediaQuery.of(context).size.width / 3.2,
+        colorList: colorList,
+        initialAngleInDegree: 0,
+        chartType: ChartType.ring,
+        ringStrokeWidth: 32,
+        centerText: "Votes",
+        legendOptions: LegendOptions(
+          showLegendsInRow: false,
+          legendPosition: LegendPosition.right,
+          showLegends: true,
+          //legendShape: _BoxShape.circle,
+          legendTextStyle: TextStyle(
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        chartValuesOptions: ChartValuesOptions(
+          showChartValueBackground: true,
+          showChartValues: true,
+          showChartValuesInPercentage: false,
+          showChartValuesOutside: false,
+          decimalPlaces: 1,
+        ),
+      ),
+    );
   }
 }
